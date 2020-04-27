@@ -1,0 +1,9 @@
+{
+    "runOnSave.commands": [
+        {
+            "match": ".*\\.md$",
+            "command": "pandoc --filter pandoc-citeproc ${file} --bibliography ${fileDirname}/bib.bib -s -o ${fileDirname}/${fileBasenameNoExtension}.pdf",
+            "runIn": "backend"
+        }
+    ]
+}
