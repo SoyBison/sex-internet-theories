@@ -59,12 +59,12 @@ class Post():
 class Newsgroup(set):
     def __init__(self, name, posts=[], loc='auto'):
         super().__init__(self)
-        heirarchy = name.split('.')[0]
+        hierarchy = name.split('.')[0]
         if loc == 'auto':
-            if not os.path.exists(f'../Data/{heirarchy}'):
+            if not os.path.exists(f'../Data/{hierarchy}'):
                 loc = '.'
             else:
-                loc = f'../Data/{heirarchy}'
+                loc = f'../Data/{hierarchy}'
 
         self.file_name = loc + '/' + name + '.zip'
         self.name = name
@@ -93,10 +93,10 @@ class Newsgroup(set):
     @classmethod
     def from_mbox(cls, file_name, rm=False):
         name = file_name.split('/')[-1][:-9]
-        heirarchy = name.split('.')[0]
-        if not os.path.exists(f'../Data/{heirarchy}'):
-            os.mkdir(f'../Data/{heirarchy}')
-        self = cls(name, loc=f'../Data/{heirarchy}')
+        hierarchy = name.split('.')[0]
+        if not os.path.exists(f'../Data/{hierarchy}'):
+            os.mkdir(f'../Data/{hierarchy}')
+        self = cls(name, loc=f'../Data/{hierarchy}')
         with zpf.ZipFile(file_name, 'r') as zp:
             raw = zp.open(f'{name}.mbox')
             raw.seek(0, 2)
