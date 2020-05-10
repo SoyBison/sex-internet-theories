@@ -1,48 +1,45 @@
-import numpy as np
-import pandas as pd
-import glob
-import pickle
-import zipfile as zpf
-import os
-import re
-from dateutil.parser import parse as dateparse
-from dateutil.parser import ParserError
-from tqdm import tqdm
-
+failures = []
 class Post():
     def __init__(self, data):
+        global failures
         raw = str(data.encode('latin1').decode('unicode_escape'))
 
         try:
-            s = re.findall('(?<=[fF]rom: )\S+@[\w.]+', raw)[0]
-        except IndexError:
             try:
-                s = re.findall('(?<=[fF]rom: )[\w \'<>,".\-@!+\\\\]+', raw )[0]
-                s = re.findall('(?<=<)[\S]+@[\S]+(?=>)', s)[0]
+                s = re.findall('(?<=[fF]rom: )\S+@[\w.]+', raw)[0]
             except IndexError:
-                s = ''
-        self.source = s
+                try:
+                    s = re.findall('(?<=[fF]rom: )[\w \'<>,".\-@!+\\\\]+', raw )[0]
+                    s = re.findall('(?<=<)[\S]+@[\S]+(?=>)', s)[0]
+                except IndexError:
+                    s = ''
+            self.source = s
 
-        d = re.findall('(?<=[Dd]ate: )[\w ,.:]+', raw)[0]
-        while True:
+            d = re.findall('(?<=[Dd]ate: )[\w ,.:]+', raw)[0]
             try:
                 self.date = dateparse(d)
-                break
             except ParserError:
-                d = d[:-4]
+                self.date = d
 
-        
-        ngroups = re.findall('(?<=[Nn]ewsgroups: )[\w ,.]+', raw )[0].split(',')
-        self.newsgroups = ngroups
+            ngroups = re.findall('(?<=[Nn]ewsgroups: )[\w ,.]+', raw )[0].split(',')
 
-        s = re.findall('(?<=[Ss]ubject: )[[\]\S .,:-]+', raw)[0]
-        self.subject = s
+            self.newsgroups = ngroups
 
-        mid = re.findall('(?<=[mM]essage-[iI][dD]: )[\S]+(?=\\n)', raw)[0]
-        self.message_id = mid
+            s = re.findall('(?<=[Ss]ubject: )[[\]\S .,:-]+', raw)[0]
+            self.subject = s
 
-        lines = [(len(x) > 0 and ':' not in x) for x in raw.split('\n')[1:]]
-        self.body = '\n'.join(raw.split('\n')[np.argmax(lines)+1:])
+            try:
+                mid = re.findall('(?<=[mM]essage-[iI][dD]: )[\S]+(?=\\n)', raw)[0]
+                self.message_id = mid
+            except IndexError as e:
+                failures.append(e.__traceback__)
+                self.message_id = f'no_mid_{len(failures)}'
+
+            lines = [(len(x) > 0 and ':' not in x) for x in raw.split('\n')[1:]]
+            self.body = '\n'.join(raw.split('\n')[np.argmax(lines)+1:])
+        except IndexError as e:
+            self.message_id = f'no_mid_{len(failures)}'
+            failures.append(e.__traceback__)
     
     def __repr__(self):
         return f'Post ID: {self.message_id}'
@@ -86,12 +83,9 @@ class Newsgroup(set):
                         self.add(post)
         except FileNotFoundError:
             pass
-
-    def __repr__(self):
-        return repr(self)
     
     @classmethod
-    def from_mbox(cls, file_name, rm=False):
+    def from_mbox(cls, file_name, rm=False, save=True):
         name = file_name.split('/')[-1][:-9]
         hierarchy = name.split('.')[0]
         if not os.path.exists(f'../Data/{hierarchy}'):
@@ -105,14 +99,23 @@ class Newsgroup(set):
 
         post_iterator = usenet_reader(raw)
         with tqdm(usenet_reader(raw), total=size) as pbar:
-            pbar.set_description(f'Loading {name}...')
+            pbar.set_description(f'Loading {name}... ')
             for post, line in usenet_reader(raw):
                 self.add(Post(post))
                 pbar.update(line)
-        
-        self.save()
+        if save:
+            self.save()
 
         if rm:
             os.remove(file_name)
         
         return self
+    
+    @classmethod
+    def from_hierarchy(cls, hierarchy):
+        toplevel = hierarchy.split('.')[0]
+        big_group = cls(hierarchy)
+        all_boards = glob.glob(f'../Data/usenet-{toplevel}/{hierarchy}*')
+        for group in all_boards:
+            big_group |= Newsgroup.from_mbox(group, save=False)
+        return big_group
