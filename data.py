@@ -1,4 +1,3 @@
-import numpy as np
 import glob
 import zipfile as zpf
 import os
@@ -36,7 +35,7 @@ def usenet_reader(zp: FileIO):
 class Post:
     def __init__(self, data):
         global failures
-        raw = data.replace('\\t', '').split('\\n')
+        raw = data.replace('\\t', '').replace('\\r', '').split('\\n')
 
         self.source = self.source_finder(raw)
         self.date = self.date_finder(raw)
@@ -58,6 +57,7 @@ class Post:
             for i, s in enumerate(strlist):
                 if len(s) == 0:
                     return i
+
         t = first_blank(raw)
         return '\n'.join(raw[t:])
 
@@ -114,17 +114,16 @@ class Post:
 
     def save(self, loc='../Data/usenet.db'):
 
-        # TODO: I have a suspicion this doesn't work right, check up on that.
         db = dataset.connect(f'sqlite:///{loc}')
         post_table = db['posts']
-        newsgroup_table = db['newsgroups']
+        newsgroup_table = db['posts']
         data_dump = {'source': self.source,
                      'date': self.date,
                      'subject': self.subject,
                      'message_id': self.message_id,
                      'body': self.body}
         post_table.upsert(data_dump, ['message_id'])
-        news_data = {group.replace('.', '_').replace('-', '$'): 1 for group in self.newsgroups}
+        news_data = {group.replace('.', '_').replace('-', '$'): 1 for group in self.newsgroups if group != ''}
         news_data['message_id'] = self.message_id
         newsgroup_table.upsert(news_data, ['message_id'])
 
@@ -133,7 +132,7 @@ class Post:
         db = dataset.connect(f'sqlite:///{loc}')
         post_table = db['posts']
         data_dump = post_table.find_one(message_id=message_id)
-        newsgroup_table = db['newsgroups']
+        newsgroup_table = db['posts']
         newsgroup_dump = newsgroup_table.find_one(message_id=message_id)
         post = cls.__new__(cls)
         data_dump.pop('id')
@@ -161,14 +160,13 @@ class Newsgroup(dict):
 
     def save(self, loc="../Data/usenet.db"):
         db = dataset.connect(f'sqlite:///{loc}')
-        if not os.path.exists(loc):
+        if not os.path.exists(loc) or len(db['posts']) == 0:
             seed = self.pop(list(self.keys())[0])
             seed.save()
         disk_mids = {d['message_id'] for d in db.query('SELECT message_id FROM posts')}
         mem_mids = {post.message_id for post in self.values()}
         new_mids = mem_mids - disk_mids
         tar_posts = []
-        tar_newsgroups = []
         pbar = tqdm(new_mids)
         pbar.set_description(f'Processing save data for {self.name}')
         for mid in pbar:
@@ -178,30 +176,33 @@ class Newsgroup(dict):
                          'subject': post.subject,
                          'message_id': post.message_id,
                          'body': post.body}
-            news_data = {group.replace('.', '_').replace('-', '$'): 1 for group in post.newsgroups if group != ''}
+            data_dump.update({group.replace('.', '_').replace('-', '$').lower(): 1 for group in post.newsgroups if
+                              group != ''})
             tar_posts.append(data_dump)
-            tar_newsgroups.append(news_data)
         print(f'Saving {self.name}...')
+        print(f'{len(new_mids)} new records found')
         db['posts'].insert_many(tar_posts, chunk_size=100000)
-        db['newsgroups'].insert_many(tar_newsgroups, chunk_size=100000)
 
     def load(self, loc="../Data/usenet.db"):
+        data_cols = ['source', 'date', 'subject', 'message_id', 'body']
         print(f'Loading {self.name}...')
         db = dataset.connect(f'sqlite:///{loc}')
-        raise NotImplementedError
 
-        disk_mids = {d['message_id'] for d in db.query('SELECT message_id FROM posts')}
-        mem_mids = {post.message_id for post in self.values()}
-        new_mids = disk_mids - mem_mids
-        all_ngs = db['newsgroups'].columns
+        all_ngs = db['posts'].columns
         name_list = self.name.split('.')
         name_depth = len(name_list)
         all_ngs = [x.split('_') for x in all_ngs]
         relevants = ['_'.join(ng) for ng in all_ngs if ng[:name_depth] == name_list]
+        newsgroup_dict = {group: 1 for group in relevants}
 
-        tar_mids = relevants
-        for mid in tqdm(new_mids):
-            self[mid] = Post.load(mid)
+        for row in db['posts'].find(**newsgroup_dict):
+            row.pop('id')
+            ngs = [k.replace('_', '.').replace('$', '-') for k in row if row[k] == 1 and (k not in data_cols)]
+            new_post = Post.__new__(Post)
+            new_post.newsgroups = ngs
+            for colname in data_cols:
+                new_post.__dict__[colname] = row[colname]
+            self[row['message_id']] = new_post
 
     @classmethod
     def from_mbox(cls, file_name, rm=False, save=True):
